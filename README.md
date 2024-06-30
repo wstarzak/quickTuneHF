@@ -1,4 +1,4 @@
-# quickTuneHF
+## quickTuneHF
 
 quickTuneHF was a project started about two years ago. The goal was to design alternative to ATU-100 that would withstand about 300W and the code would be Arduino based & opensource to make further modifications much easier. To further expand its capabilites, the CPU board is split form RF board - so the whole project might be rewritten to eg ESP32.
 Unfortunately due to lack of time & issues with tuning algorithm this project is not fully operational.  
