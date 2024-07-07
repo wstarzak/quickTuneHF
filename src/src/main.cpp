@@ -20,11 +20,13 @@
 #define SWR_REF_PIN A7
 #define SWR_FWD_PIN A0
 
-#define MAX_SWR 1.3
+#define MAX_SWR 11.3
 #define MAX_TUNING_SWR 15.0
 
 #define L_COUNT 7
 #define C_COUNT 8
+
+#define DEBUG true
 
 struct Point
 {
@@ -41,6 +43,9 @@ boolean registers_c[8];
 
 int cap_value;
 int ind_value;
+
+float frequency;
+bool frequency_lock = false;
 
 bool c_side_ant = HIGH;
 bool c_side_trx = LOW;
@@ -185,9 +190,11 @@ void coarse_ind(uint16_t ind_step = 3) // x 3 should be a variable dependent on 
     writeRegistersL();
     if (grid_vector.max_size() > grid_vector.size()) { grid_vector.push_back({ind_value, (-1+(2*c_side_trx))*cap_value}); }
     float current_swr = getSWR();
-    //Serial.print(current_swr);
-    //Serial.print(" current IND SWR, iteration: ");
-    //Serial.println(i);
+    if(DEBUG) {
+      char s [128];
+      sprintf (s, "[C_IND]: SWR: %4.2f, IT: %2u, L: %3d, C: %3d", current_swr, i, ind_value, (-1+(2*c_side_trx))*cap_value);
+      Serial.println(s);
+    }
     if(current_swr == 0.0) { break; } // TX stopped while tunnning
     if(current_swr < min_swr) {
       min_swr = current_swr;
@@ -212,9 +219,11 @@ void coarse_cap(uint16_t cap_step = 3) // x 8 should be a variable dependent on 
     writeRegistersC();
     if (grid_vector.max_size() > grid_vector.size()) { grid_vector.push_back({ind_value, (-1+(2*c_side_trx))*cap_value}); }
     float current_swr = getSWR();
-    //Serial.print(current_swr);
-    //Serial.print(" current CAP SWR, iteration: ");
-    //Serial.println(i);
+    if(DEBUG) {
+      char s [128];
+      sprintf (s, "[C_CAP]: SWR: %4.2f, IT: %2u, L: %3d, C: %3d", current_swr, i, ind_value, (-1+(2*c_side_trx))*cap_value);
+      Serial.println(s);
+    }
     if(current_swr == 0.0) { break; } // TX stopped while tunnning
     if(current_swr < min_swr) {
       min_swr = current_swr;
@@ -255,13 +264,12 @@ void fine_tuning(uint16_t fine_step = 1) {
       writeRegistersL();
       set_cap_value(init_cap_val + cap);
       writeRegistersC();
-      //Serial.print("[");
-      //Serial.print(ind_value);
-      //Serial.print(" ");
-      //Serial.print((-1+(2*c_side_trx))*(init_cap_val + cap));
-      //Serial.println("]");
       float current_swr = getSWR();
-      Serial.println(current_swr);
+      if(DEBUG) {
+        char s [128];
+        sprintf (s, "[FINE]: SWR: %4.2f, L: %3d, C: %3d", current_swr, ind_value, (-1+(2*c_side_trx))*cap_value);
+        Serial.println(s);
+      }
       if(current_swr < MAX_SWR) { tuned = true; return; }
       if(current_swr == 0.0) { break; } // TX stopped while tunnning
       if(current_swr < min_swr) {
@@ -288,26 +296,54 @@ void reset_LC() {
 
 void loop()
 {
-  if(getSWR() > MAX_SWR) {
-    tuned = false;
-    reset_LC();
-    coarse_ind();
-    coarse_cap();
-    Serial.println("Fine tune...");
-    for(int i = 3; i > 0; i--) {
-      for(int y = 0; y < 16; y++) {
-        fine_tuning(i);
+  float freq_lock[10];
+  for(int i=0; i<10; i++) {
+    while(!FreqCount.available()) { continue; }
+    frequency = (((float)FreqCount.read() * 4096.0 / 100000.0));
+    freq_lock[i] = frequency;
+    if(i > 3) {
+      if (freq_lock[i-1] == freq_lock[i] &&
+          freq_lock[i-2] == freq_lock[i] &&
+          freq_lock[i-3] == freq_lock[i]) 
+        {
+          if(frequency > 1.0 && frequency < 30.0) {
+            frequency_lock = true;
+          }
+        } else {
+          frequency_lock = false;
+        }
+        if(frequency_lock == true) { break; }
+    }
+  }
+
+  if(frequency_lock) {
+    float swr = getSWR();
+    if(DEBUG) {
+      char s [128];
+      sprintf (s, "[FRQ]: %4.2fMHz SWR: %2.2f", frequency, swr);
+      Serial.println(s);
+    }
+    if(swr > MAX_SWR) {
+      tuned = false;
+      reset_LC();
+      coarse_ind();
+      coarse_cap();
+      Serial.println("Fine tune...");
+      for(int i = 3; i > 0; i--) {
+        for(int y = 0; y < 16; y++) {
+          fine_tuning(i);
+          if(tuned) { break; }
+        }
         if(tuned) { break; }
       }
-      if(tuned) { break; }
+      delay(4000);
+      if(getSWR() > MAX_SWR) {
+        c_side_ant = LOW;
+        c_side_trx = HIGH;
+        writeRegistersC();
+        coarse_cap();
+      }
+      delay(3000);
     }
-    delay(4000);
-    if(getSWR() > MAX_SWR) {
-      c_side_ant = LOW;
-      c_side_trx = HIGH;
-      writeRegistersC();
-      coarse_cap();
-    }
-    delay(3000);
   }
 }
