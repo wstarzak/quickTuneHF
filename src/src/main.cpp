@@ -9,6 +9,12 @@
 
 #define DEBUG true
 
+#if DEBUG
+  #define DBG_PRINTF(fmt, ...) Serial.printf("[DBG] " fmt "\n", ##__VA_ARGS__)
+#else
+  #define DBG_PRINTF(fmt, ...)
+#endif
+
 #define TUNING_STEP_160M 5
 #define TUNING_STEP_80M 4
 #define TUNING_STEP_60M 3
@@ -83,6 +89,7 @@ void setup()
   clearRegistersL();
   writeRegistersC();
   writeRegistersL();
+  DBG_PRINTF("Setup complete");
 }
 
 // set all register pins to HIGH
@@ -188,10 +195,13 @@ float getSWR(uint8_t average = 5)
   
   if (ref < 10.0 && fwd < 10.0)
   {
+    DBG_PRINTF("getSWR: no TX (ref=%.1f fwd=%.1f)", ref, fwd);
     return 0.0;
   }
 
-  return (1.0 + (ref / fwd)) / (1.0 - (ref / fwd));
+  float swr_result = (1.0 + (ref / fwd)) / (1.0 - (ref / fwd));
+  DBG_PRINTF("getSWR: ref=%.1f fwd=%.1f -> SWR=%.2f", ref, fwd, swr_result);
+  return swr_result;
 }
 
 // EXIT CODES
@@ -207,6 +217,7 @@ uint8_t coarse_ind(uint16_t ind_step)
 
   float min_swr = 99.9;
 
+  DBG_PRINTF("coarse_ind: step=%u max=%u", ind_step, max_ind_val);
   for (uint16_t i = min_swr_ind_val; i < max_ind_val; i += ind_step)
   {
     set_ind_value(i);
@@ -218,13 +229,15 @@ uint8_t coarse_ind(uint16_t ind_step)
     }
 
     float current_swr = getSWR();
+    DBG_PRINTF("coarse_ind: ind=%u SWR=%.2f (min=%.2f)", ind_value, current_swr, min_swr);
     if (current_swr == 0.0) // TX stopped while tunnning
     {
+      DBG_PRINTF("coarse_ind: TX stopped");
       tuned = false;
       return 2;
     }
 
-    if (current_swr < min_swr) // Update minimum SWR & inductor values if the SWR starts decreasing 
+    if (current_swr < min_swr) // Update minimum SWR & inductor values if the SWR starts decreasing
     {
       min_swr = current_swr;
       min_swr_ind_val = ind_value;
@@ -233,6 +246,7 @@ uint8_t coarse_ind(uint16_t ind_step)
 
     if ((current_swr - min_swr) > 1.0) // We do not want really tune if the swr increase instead of decrease...
     {
+      DBG_PRINTF("coarse_ind: SWR rising, stopping early at ind=%u", ind_value);
       break;
     }
   }
@@ -240,6 +254,7 @@ uint8_t coarse_ind(uint16_t ind_step)
   // At the end of tuning routine set inductor value with corresponded with minimum SWR
   set_ind_value(min_swr_ind_val);
   writeRegistersL();
+  DBG_PRINTF("coarse_ind: best ind=%u SWR=%.2f exit=%u", min_swr_ind_val, min_swr, exit_code);
   return exit_code;
 }
 
@@ -256,6 +271,7 @@ uint8_t coarse_cap(uint16_t cap_step)
 
   float min_swr = 99.9;
 
+  DBG_PRINTF("coarse_cap: step=%u max=%u c_side_trx=%d", cap_step, max_cap_val, c_side_trx);
   for (uint16_t i = min_swr_cap_val; i < max_cap_val; i += cap_step)
   {
     set_cap_value(i);
@@ -266,13 +282,15 @@ uint8_t coarse_cap(uint16_t cap_step)
     }
 
     float current_swr = getSWR();
+    DBG_PRINTF("coarse_cap: cap=%d SWR=%.2f (min=%.2f)", cap_value, current_swr, min_swr);
     if (current_swr == 0.0) // TX stopped while tunnning
     {
+      DBG_PRINTF("coarse_cap: TX stopped");
       tuned = false;
       return 2;
     }
 
-    if (current_swr < min_swr) // Update minimum SWR & inductor values if the SWR starts decreasing 
+    if (current_swr < min_swr) // Update minimum SWR & inductor values if the SWR starts decreasing
     {
       min_swr = current_swr;
       min_swr_cap_val = cap_value;
@@ -281,13 +299,15 @@ uint8_t coarse_cap(uint16_t cap_step)
 
     if ((current_swr - min_swr) > 1.0) // We do not want really tune if the swr increase instead of decrease...
     {
+      DBG_PRINTF("coarse_cap: SWR rising, stopping early at cap=%d", cap_value);
       break;
-    } 
+    }
   }
 
   // At the end of tuning routine set capacitor value with corresponded with minimum SWR
   set_cap_value(min_swr_cap_val);
   writeRegistersC();
+  DBG_PRINTF("coarse_cap: best cap=%d SWR=%.2f exit=%u", min_swr_cap_val, min_swr, exit_code);
   return exit_code;
 }
 
@@ -347,14 +367,17 @@ uint8_t fine_tuning(int16_t fine_step = 1)
       writeRegistersC();
 
       float current_swr = getSWR();
+      DBG_PRINTF("fine_tuning: ind=%u cap=%d SWR=%.2f", ind_value, cap_value, current_swr);
       if (current_swr == 0.0)
       {
+        DBG_PRINTF("fine_tuning: TX stopped");
         tuned = false;
         return 2;
       }
 
       if (current_swr < MAX_SWR)
       {
+        DBG_PRINTF("fine_tuning: TUNED ind=%u cap=%d SWR=%.2f", ind_value, cap_value, current_swr);
         tuned = true;
         tuned_frequency = frequency;
         freq_vector.push_back({frequency, ind_value, (int16_t)(-1 + (2 * c_side_trx)) * (cap_value)});
@@ -374,6 +397,7 @@ uint8_t fine_tuning(int16_t fine_step = 1)
   writeRegistersL();
   set_cap_value(min_swr_cap_val);
   writeRegistersC();
+  DBG_PRINTF("fine_tuning: best ind=%u cap=%d SWR=%.2f exit=%u", min_swr_ind_val, min_swr_cap_val, min_swr, exit_code);
   return(exit_code);
 }
 
@@ -447,6 +471,7 @@ void loop()
         }
     }
   }
+  DBG_PRINTF("loop: frq=%.3f MHz lock=%d SWR=%.2f tuned=%d tuned_frq=%.3f", frequency, frequency_lock, swr, tuned, tuned_frequency);
 
   if(frequency_lock) {
     for (size_t i = 0; i < freq_vector.size(); i++)
@@ -470,6 +495,7 @@ void loop()
   }
 
   if(swr > MAX_SWR && (abs(frequency - tuned_frequency) > 0.07) && tuned && frequency_lock) {
+    DBG_PRINTF("loop: frequency shifted (%.3f -> %.3f), clearing tuned state", tuned_frequency, frequency);
     tuned_frequency = 999.9;
     tuned = false;
   }
@@ -478,6 +504,7 @@ void loop()
   {
     tuning_step = set_tuning_step(frequency);
     grid_vector.clear();
+    DBG_PRINTF("loop: starting tuning frq=%.3f SWR=%.2f step=%u", frequency, swr, tuning_step);
     if (swr < MAX_TUNING_SWR)
     {
       reset_LC();
@@ -486,6 +513,7 @@ void loop()
       if(coarse_cap_exit_code == 2) return;
       if (coarse_cap_exit_code == 1)
       {
+        DBG_PRINTF("loop: coarse_cap failed, retrying with c_side_trx=HIGH");
         c_side_ant = LOW;
         c_side_trx = HIGH;
         clearRegistersC();
@@ -497,16 +525,22 @@ void loop()
       {
         for (int y = 0; y < 3; y++)
         {
+          DBG_PRINTF("loop: fine_tuning pass i=%d y=%d", i, y);
           uint8_t fine_tune_exit_code = fine_tuning(i); // one last pass to finetune
           if(fine_tune_exit_code == 2) return;
           if((fine_tune_exit_code == 1)) break;
           if (tuned) return;
         }
       }
+      DBG_PRINTF("loop: tuning complete ind=%u cap=%d frq=%.3f", ind_value, cap_value, frequency);
       tuned = true;
       tuned_frequency = frequency;
       freq_vector.push_back({frequency, ind_value, (int16_t)(-1 + (2 * c_side_trx)) * (cap_value)});
       delay(2000);
+    }
+    else
+    {
+      DBG_PRINTF("loop: SWR=%.2f too high (max=%.1f), skipping tuning", swr, MAX_TUNING_SWR);
     }
   }
 }
