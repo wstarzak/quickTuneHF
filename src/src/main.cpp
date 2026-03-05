@@ -167,14 +167,23 @@ void setRegisterPinC(int index, int value)
   registers_c[index] = value;
 }
 
-float getSWR(uint8_t average = 1)
+float getSWR(uint8_t average = 5)
 {
-  float ref = 1, fwd = 1;
+  float ref = 0, fwd = 0;
+  uint8_t valid = 0;
+  uint8_t attempts = 0;
 
-  for (uint8_t i = 0; i < average; i++)
+  while (valid < average && attempts < average + 20)
   {
-    ref += (float)analogRead(SWR_REF_PIN);
-    fwd += (float)analogRead(SWR_FWD_PIN);
+    float ref_tmp = (float)analogRead(SWR_REF_PIN);
+    float fwd_tmp = (float)analogRead(SWR_FWD_PIN);
+    attempts++;
+    if (ref_tmp > fwd_tmp) {
+      continue;
+    }
+    ref += ref_tmp;
+    fwd += fwd_tmp;
+    valid++;
   }
   
   if (ref < 10.0 && fwd < 10.0)
@@ -286,7 +295,7 @@ uint8_t coarse_cap(uint16_t cap_step)
 // 0 - succesfully decreased SWR
 // 1 - failed to decrease
 // 2 - TX stopped
-uint8_t fine_tuning(uint16_t fine_step = 1)
+uint8_t fine_tuning(int16_t fine_step = 1)
 {
   uint16_t init_ind_val = ind_value;
   int16_t init_cap_val = cap_value;
@@ -298,9 +307,9 @@ uint8_t fine_tuning(uint16_t fine_step = 1)
   uint16_t min_swr_ind_val = ind_value;
   
   // This checks all combinations around minimum value so we get best match
-  for (uint16_t ind = -fine_step; ind < 2; ind += fine_step)
+  for (int16_t ind = -fine_step; ind <= fine_step; ind += fine_step)
   {
-    for (int16_t cap = -fine_step; cap < 2; cap += fine_step)
+    for (int16_t cap = -fine_step; cap <= fine_step; cap += fine_step)
     {
       bool in_grid = false;
 
@@ -314,20 +323,18 @@ uint8_t fine_tuning(uint16_t fine_step = 1)
         continue;
       }
 
-      for (size_t i = 0; i < grid_vector.max_size(); i++)
+      for (size_t i = 0; i < grid_vector.size(); i++)
       {
         if ((grid_vector.at(i).ind == (init_ind_val + ind)) && (grid_vector.at(i).cap == ((-1 + (2 * c_side_trx)) * (init_cap_val + cap))))
         {
           in_grid = true;
           break;
         }
-        else
-        {
-          if (grid_vector.max_size() > grid_vector.size())
-          {
-            grid_vector.push_back({(init_ind_val + ind), (int16_t)(-1 + (2 * c_side_trx)) * (init_cap_val + cap)});
-          }
-        }
+      }
+
+      if (!in_grid && grid_vector.max_size() > grid_vector.size())
+      {
+        grid_vector.push_back({(uint16_t)(init_ind_val + ind), (int16_t)(-1 + (2 * c_side_trx)) * (init_cap_val + cap)});
       }
 
       if (in_grid)
@@ -401,7 +408,8 @@ int set_tuning_step(float frequency)
   case 24:
     return TUNING_STEP_12M;
     break;
-  case 30:
+  case 28:
+  case 29:
     return TUNING_STEP_10M;
     break;
   default:
@@ -432,18 +440,16 @@ void loop()
 
   if(FreqCount.available() && (swr != 0.0)) {
     freq_lock.update((((float)FreqCount.read() * 4096.0 / 100000.0)));
-    if (frequency > 1.0 && frequency < 30.0) {
       if (freq_lock.getMaxDeviation() < 0.2) {
         if (freq_lock.getMean() > 1.0 && freq_lock.getMean() < 30.0) {
           frequency_lock = true;
           frequency = freq_lock.getMean();
         }
-      }
     }
   }
 
   if(frequency_lock) {
-    for (size_t i = 0; i < freq_vector.max_size(); i++)
+    for (size_t i = 0; i < freq_vector.size(); i++)
     {
       if(abs(freq_vector.at(i).frq - frequency) < 0.01) {
         if(freq_vector.at(i).cap < 0){
