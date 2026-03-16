@@ -4,6 +4,72 @@
 #define MAX_SWR 1.3
 #define MAX_TUNING_SWR 15.0
 
+// ─── Diode nonlinearity correction ────────────────────────────────────────────
+// Directional-coupler diodes operate in the square-law region at low RF levels
+// (V_dc ∝ V_rf²) and transition toward linear detection at higher levels.
+// Both detectors must be corrected identically so the ref/fwd ratio reflects
+// true voltage ratios before the SWR formula is applied.
+//
+// Available methods — set SWR_CORRECTION_TYPE to one of:
+//   SWR_CORRECTION_NONE  – raw ADC readings, no correction
+//   SWR_CORRECTION_LUT   – lookup table with linear interpolation (recommended)
+//   SWR_CORRECTION_SQRT  – square-root correction (pure square-law assumption)
+//
+// LUT notes:
+//   • 33 breakpoints spaced SWR_LUT_STEP (32) ADC counts apart cover 0–1023.
+//   • Default values were computed as corrected = sqrt(raw × 1023), which is
+//     the ideal square-law correction normalised to full scale.
+//   • To calibrate, apply a known 50-Ω source at several power levels, measure
+//     the raw ADC values, and replace the corresponding table entries with the
+//     ADC-equivalent values that yield the correct 1:1 ratio at each level.
+//   • The table is stored in program flash (PROGMEM) to preserve SRAM.
+// ──────────────────────────────────────────────────────────────────────────────
+
+#define SWR_CORRECTION_NONE 0
+#define SWR_CORRECTION_LUT  1
+#define SWR_CORRECTION_SQRT 2
+
+#define SWR_CORRECTION_TYPE SWR_CORRECTION_LUT
+
+#define SWR_LUT_STEP 32
+#define SWR_LUT_SIZE 33   // breakpoints at 0, 32, 64, …, 1024
+
+// Default: pure square-law correction — corrected = sqrt(raw * 1023).
+// Replace with empirically measured values for your specific diodes.
+static const uint16_t swr_lut[SWR_LUT_SIZE] PROGMEM = {
+      0,  181,  256,  313,  362,  404,  443,  479,
+    512,  543,  572,  599,  627,  652,  677,  701,
+    724,  745,  767,  788,  808,  828,  848,  866,
+    885,  903,  922,  939,  957,  974,  991, 1007,
+   1023
+};
+
+// Apply the selected nonlinearity correction to a single raw ADC sample.
+static float correctDiodeReading(float raw)
+{
+#if SWR_CORRECTION_TYPE == SWR_CORRECTION_NONE
+  return raw;
+
+#elif SWR_CORRECTION_TYPE == SWR_CORRECTION_SQRT
+  // Square-root correction assumes both detectors are fully in the square-law
+  // region.  Output is normalised so that 1023 in → 1023 out.
+  if (raw <= 0.0f) return 0.0f;
+  return sqrtf(raw * 1023.0f);
+
+#elif SWR_CORRECTION_TYPE == SWR_CORRECTION_LUT
+  if (raw <= 0.0f)    return 0.0f;
+  if (raw >= 1023.0f) return 1023.0f;
+  uint16_t idx  = (uint16_t)(raw / SWR_LUT_STEP);
+  float    frac = (raw - idx * SWR_LUT_STEP) / (float)SWR_LUT_STEP;
+  float    lo   = (float)pgm_read_word(&swr_lut[idx]);
+  float    hi   = (float)pgm_read_word(&swr_lut[idx + 1]);
+  return lo + frac * (hi - lo);
+
+#else
+  #error "Unknown SWR_CORRECTION_TYPE – choose NONE, LUT, or SQRT"
+#endif
+}
+
 #define L_COUNT 7
 #define C_COUNT 8
 
@@ -182,8 +248,8 @@ float getSWR(uint8_t average = 5)
 
   while (valid < average && attempts < average + 20)
   {
-    float ref_tmp = (float)analogRead(SWR_REF_PIN);
-    float fwd_tmp = (float)analogRead(SWR_FWD_PIN);
+    float ref_tmp = correctDiodeReading((float)analogRead(SWR_REF_PIN));
+    float fwd_tmp = correctDiodeReading((float)analogRead(SWR_FWD_PIN));
     attempts++;
     if (ref_tmp > fwd_tmp) {
       continue;
